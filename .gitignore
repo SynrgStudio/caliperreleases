@@ -1,0 +1,10 @@
+# Binaries belong in GitHub Release assets, never repository commits.
+*.exe
+*.zip
+*.pdb
+.env
+.env.*
+*.key
+*.pem
+*.pfx
+*.p12
