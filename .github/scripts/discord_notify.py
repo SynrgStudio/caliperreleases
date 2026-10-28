@@ -68,13 +68,31 @@ def message(name, event):
         return issue_message(event)
     return None
 
+def manual_message(what, latest):
+    """Manual run (Actions → Discord → Run workflow): re-announce the latest release, or test the issues channel."""
+    if what == 'test-issues':
+        return 'DISCORD_WEBHOOK_ISSUES', {'embeds': [{'author': {'name': 'Connected'}, 'title': 'Caliper issue updates will appear here',
+                'url': 'https://github.com/SynrgStudio/caliperreleases/issues', 'color': 0x5865F2,
+                'description': 'New reports and resolved issues from the public tracker are posted in this channel.'}]}
+    return release_message({'release': latest()}) if what == 'latest-release' else None
+
+def latest_release():
+    request = urllib.request.Request(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/releases/latest",
+                                     headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'caliper-discord-notify',
+                                              **({'Authorization': 'Bearer ' + os.environ['GITHUB_TOKEN']} if os.environ.get('GITHUB_TOKEN') else {})})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.loads(response.read())
+
 def main():
     if len(sys.argv) == 4 and sys.argv[1] == '--print':
         with open(sys.argv[3], encoding='utf-8') as f:
             print(json.dumps(message(sys.argv[2], json.load(f)), ensure_ascii=False, indent=2))
         return 0
-    with open(os.environ['GITHUB_EVENT_PATH'], encoding='utf-8') as f:
-        found = message(os.environ['GITHUB_EVENT_NAME'], json.load(f))
+    if os.environ['GITHUB_EVENT_NAME'] == 'workflow_dispatch':
+        found = manual_message(os.environ.get('WHAT', ''), latest_release)
+    else:
+        with open(os.environ['GITHUB_EVENT_PATH'], encoding='utf-8') as f:
+            found = message(os.environ['GITHUB_EVENT_NAME'], json.load(f))
     if not found:
         print('Nothing to announce for this event.')
         return 0

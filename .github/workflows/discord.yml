@@ -1,11 +1,19 @@
 # Announces published releases and public issue updates on the Caliper Discord.
 # Secrets: DISCORD_WEBHOOK_RELEASES and (optional) DISCORD_WEBHOOK_ISSUES. Drafts are never announced.
+# Manual run: re-announce the latest release, or post a connection test to the issues channel.
 name: Discord
 on:
   release:
     types: [published]
   issues:
     types: [opened, closed, reopened]
+  workflow_dispatch:
+    inputs:
+      what:
+        description: What to post
+        type: choice
+        options: [latest-release, test-issues]
+        default: latest-release
 permissions:
   contents: read
 jobs:
@@ -20,4 +28,6 @@ jobs:
         env:
           DISCORD_WEBHOOK_RELEASES: ${{ secrets.DISCORD_WEBHOOK_RELEASES }}
           DISCORD_WEBHOOK_ISSUES: ${{ secrets.DISCORD_WEBHOOK_ISSUES }}
+          GITHUB_TOKEN: ${{ github.token }}
+          WHAT: ${{ inputs.what }}
         run: python3 .github/scripts/discord_notify.py
