@@ -1,0 +1,23 @@
+# Announces published releases and public issue updates on the Caliper Discord.
+# Secrets: DISCORD_WEBHOOK_RELEASES and (optional) DISCORD_WEBHOOK_ISSUES. Drafts are never announced.
+name: Discord
+on:
+  release:
+    types: [published]
+  issues:
+    types: [opened, closed, reopened]
+permissions:
+  contents: read
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+      - name: Post to Discord
+        env:
+          DISCORD_WEBHOOK_RELEASES: ${{ secrets.DISCORD_WEBHOOK_RELEASES }}
+          DISCORD_WEBHOOK_ISSUES: ${{ secrets.DISCORD_WEBHOOK_ISSUES }}
+        run: python3 .github/scripts/discord_notify.py
