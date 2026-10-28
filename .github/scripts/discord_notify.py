@@ -1,5 +1,9 @@
-"""Post Caliper releases and public issue updates to Discord (GitHub Actions, standard library only).
+"""Post releases and public issue updates to Discord (GitHub Actions, standard library only).
 
+Shared by Caliper (SynrgStudio/caliperreleases) and Breadslicer (breadslicer-app/breadslicer);
+the authoritative copy lives in calipersource/community/caliperreleases. Per repository:
+PRODUCT (display name, default: repository name) and SETUP_ASSET (installer shown as the
+download link; default: the first .exe, else .msi/.zip/.dmg/.AppImage asset).
 Reads the triggering event from GITHUB_EVENT_PATH; event text is never interpolated into a
 shell, and mentions are disabled, so issue titles cannot ping @everyone or run commands.
 Secrets: DISCORD_WEBHOOK_RELEASES (releases) and DISCORD_WEBHOOK_ISSUES (issues; falls back
@@ -10,34 +14,52 @@ import json, os, re, sys, urllib.error, urllib.request
 
 SECTIONS = ("What's new", 'Improvements', 'Fixes')
 LIMIT = 3900  # Discord embed descriptions allow 4096 characters
+INSTALLERS = ('.exe', '.msi', '.zip', '.dmg', '.appimage')
+
+def product():
+    return os.environ.get('PRODUCT') or os.environ.get('GITHUB_REPOSITORY', '/Caliper').split('/')[-1].capitalize()
+
+def trim(text):
+    return text if len(text) <= LIMIT else text[:LIMIT].rsplit('\n', 1)[0] + '\n…'
 
 def sections(body):
-    """The release-note sections worth announcing, plus the installer SHA-256."""
+    """What's new / Improvements / Fixes when present (Caliper's contract), else the whole body
+    without its title; plus the first SHA-256 found."""
     body = (body or '').replace('\r\n', '\n')
     parts = []
     for name in SECTIONS:
-        m = re.search(r'^##[ \t]+' + re.escape(name) + r'[ \t]*\n(.*?)(?=^##[ \t]|^\*\*Caliper-Setup\.exe SHA-256|\Z)', body, re.M | re.S)
+        m = re.search(r'^##[ \t]+' + re.escape(name) + r'[ \t]*\n(.*?)(?=^##[ \t]|^\*\*[^\n]*SHA-256|\Z)', body, re.M | re.S)
         text = m.group(1).strip() if m else ''
         if text and text.lower().rstrip('.') != '- none':
             parts.append(f'**{name}**\n{text}')
-    sha = re.search(r'Caliper-Setup\.exe SHA-256:\*\*\s*`([0-9a-f]{64})`', body)
-    text = '\n\n'.join(parts)
-    if len(text) > LIMIT:
-        text = text[:LIMIT].rsplit('\n', 1)[0] + '\n…'
-    return text, sha.group(1) if sha else None
+    sha = re.search(r'SHA-256:?\**\s*`([0-9a-fA-F]{64})`', body)
+    if not parts:
+        rest = re.sub(r'\A#[ \t][^\n]*\n', '', body.strip()).strip()
+        parts = [rest] if rest else []
+    return trim('\n\n'.join(parts)), sha.group(1).lower() if sha else None
+
+def setup_asset(assets):
+    wanted = os.environ.get('SETUP_ASSET')
+    if wanted:
+        return next((a for a in assets if a['name'] == wanted), None)
+    for suffix in INSTALLERS:
+        found = next((a for a in assets if a['name'].lower().endswith(suffix)), None)
+        if found:
+            return found
+    return None
 
 def release_message(event):
     r = event['release']
     if r.get('draft') or r.get('prerelease'):
         return None
     text, sha = sections(r.get('body'))
-    setup = next((a['browser_download_url'] for a in r.get('assets', []) if a['name'] == 'Caliper-Setup.exe'), None)
+    setup = setup_asset(r.get('assets', []))
     fields = []
     if setup:
-        fields.append({'name': 'Download', 'value': f'[Caliper-Setup.exe]({setup})', 'inline': True})
+        fields.append({'name': 'Download', 'value': f"[{setup['name']}]({setup['browser_download_url']})", 'inline': True})
     if sha:
         fields.append({'name': 'SHA-256', 'value': f'`{sha}`', 'inline': False})
-    name = r.get('name') or r['tag_name']
+    name = r.get('name') or f"{product()} {r['tag_name']}"
     return 'DISCORD_WEBHOOK_RELEASES', {'embeds': [{'title': f'{name} is out', 'url': r['html_url'], 'color': 0xF0A04B,
             'description': (text + '\n\n' if text else '') + f"[Full release notes]({r['html_url']})", 'fields': fields}]}
 
@@ -71,17 +93,23 @@ def message(name, event):
 def manual_message(what, latest):
     """Manual run (Actions → Discord → Run workflow): re-announce the latest release, or test the issues channel."""
     if what == 'test-issues':
-        return 'DISCORD_WEBHOOK_ISSUES', {'embeds': [{'author': {'name': 'Connected'}, 'title': 'Caliper issue updates will appear here',
-                'url': 'https://github.com/SynrgStudio/caliperreleases/issues', 'color': 0x5865F2,
+        repo = os.environ.get('GITHUB_REPOSITORY', 'SynrgStudio/caliperreleases')
+        return 'DISCORD_WEBHOOK_ISSUES', {'embeds': [{'author': {'name': 'Connected'}, 'title': f'{product()} issue updates will appear here',
+                'url': f'https://github.com/{repo}/issues', 'color': 0x5865F2,
                 'description': 'New reports and resolved issues from the public tracker are posted in this channel.'}]}
     return release_message({'release': latest()}) if what == 'latest-release' else None
 
 def latest_release():
     request = urllib.request.Request(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/releases/latest",
-                                     headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'caliper-discord-notify',
+                                     headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'discord-notify',
                                               **({'Authorization': 'Bearer ' + os.environ['GITHUB_TOKEN']} if os.environ.get('GITHUB_TOKEN') else {})})
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return json.loads(response.read())
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            raise SystemExit('No published release yet; nothing to announce.') from None
+        raise
 
 def main():
     if len(sys.argv) == 4 and sys.argv[1] == '--print':
@@ -101,9 +129,9 @@ def main():
     if not url:
         print(f'{secret} is not configured; nothing was posted.')
         return 0
-    payload.update({'username': 'Caliper', 'allowed_mentions': {'parse': []}})
+    payload.update({'username': product(), 'allowed_mentions': {'parse': []}})
     request = urllib.request.Request(url, data=json.dumps(payload).encode(), method='POST',
-                                     headers={'Content-Type': 'application/json', 'User-Agent': 'caliper-discord-notify'})
+                                     headers={'Content-Type': 'application/json', 'User-Agent': 'discord-notify'})
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             print('Posted to Discord:', response.status)

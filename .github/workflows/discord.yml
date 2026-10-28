@@ -1,4 +1,4 @@
-# Announces published releases and public issue updates on the Caliper Discord.
+# Announces published releases and public issue updates on the Caliper Discord (PRODUCT below).
 # Secrets: DISCORD_WEBHOOK_RELEASES and (optional) DISCORD_WEBHOOK_ISSUES. Drafts are never announced.
 # Manual run: re-announce the latest release, or post a connection test to the issues channel.
 name: Discord
@@ -30,4 +30,6 @@ jobs:
           DISCORD_WEBHOOK_ISSUES: ${{ secrets.DISCORD_WEBHOOK_ISSUES }}
           GITHUB_TOKEN: ${{ github.token }}
           WHAT: ${{ inputs.what }}
+          PRODUCT: Caliper
+          SETUP_ASSET: Caliper-Setup.exe
         run: python3 .github/scripts/discord_notify.py
